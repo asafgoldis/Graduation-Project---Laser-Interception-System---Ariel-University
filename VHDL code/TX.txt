@@ -1,0 +1,58 @@
+
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity TX is
+	GENERIC(	sys_clk_freq	: INTEGER := 50_000_000;
+				baudrate  		: INTEGER := 9600);	
+	Port  (	CLK 				: in STD_LOGIC;
+				DATA 				: in STD_LOGIC_VECTOR(7 downto 0);
+				START 			: in STD_LOGIC;
+				BUSY 				: out STD_LOGIC;
+				TX_LINE 			: out STD_LOGIC);
+end TX;
+
+architecture Behavioral of TX is
+	constant max_PRSCL	: INTEGER := sys_clk_freq/baudrate;	 -- 50MHz /256000=195.33 (256000: the baudrate)
+	constant half_PRSCL	: INTEGER := max_PRSCL/2;
+	signal PRSCL 			: INTEGER range 0 to baudrate := 0;
+	signal INDEX 			: INTEGER range 0 to 9 := 0;
+	signal DATAFLL 		: STD_LOGIC_VECTOR(9 downto 0);
+	signal TX_FLG 			: STD_LOGIC := '0';
+begin
+
+	-- trnsmiter
+	process(CLK)
+	begin
+		if rising_edge(CLK) then
+			if (TX_FLG = '0' and START = '1') then
+				TX_FLG <= '1';
+				BUSY <= '1';
+				DATAFLL(0) <= '0';
+				DATAFLL(8 downto 1) <= DATA;
+				DATAFLL(9) <= '1';
+			end if;
+			
+			if (TX_FLG = '1') then
+				if (PRSCL < max_PRSCL) then -- -- 50MHz /256000=195.33 (256000: the baudrate)
+					PRSCL <= PRSCL + 1;
+				else
+					PRSCL <= 0;
+				end if;
+				
+				if (PRSCL = half_PRSCL) then
+					TX_LINE <= DATAFLL(INDEX);
+					if (index < 9) then
+						index <= index + 1;
+					else
+						TX_FLG <= '0';
+						BUSY <= '0';
+						index <= 0;
+					end if;	
+				end if;
+			end if;
+		end if;
+	end process;
+	
+end Behavioral;

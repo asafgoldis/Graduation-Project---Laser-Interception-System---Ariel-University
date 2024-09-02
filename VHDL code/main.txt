@@ -1,0 +1,169 @@
+
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+--use ieee.std_logic_unsigned.all;
+--use ieee.std_logic_arith.all;
+--use ieee.numeric_std.all;
+
+entity main is
+	Port(	sys_clk    			: in STD_LOGIC;
+--			x_ok_led				: out STD_LOGIC;	-- LEDG(7)
+--			y_ok_led				: out STD_LOGIC;	-- LEDG(6)
+--			confirmation_key_led 	: out STD_LOGIC;	-- LEDR(0)
+			 
+			UART_RXD 			: in STD_LOGIC;
+--			UART_TXD 			: out STD_LOGIC := '0';
+			 
+			confirmation_key	: in  STD_LOGIC;
+			laser					: out STD_LOGIC;
+			flicker				: out STD_LOGIC;
+			siren					: out STD_LOGIC;
+			pwm_x, pwm_y  		: out STD_LOGIC);
+end main;
+
+architecture Behavioral of main is
+constant	baudrate 				: INTEGER := 256_000;		
+constant min_period	 			: INTEGER := 28_150;   		-- 28150/50_000_000 = 0.563 ms
+constant max_period	 			: INTEGER := 121_900; 		-- 121900/50_000_000 = 2.438 ms
+constant pwm_resolution 		: INTEGER := 6;				-- 6 bit resolution
+
+signal position_x, position_y : STD_LOGIC_VECTOR(pwm_resolution-1 downto 0) := "100000"; -- x"80"
+signal fire_confirmation 		: STD_LOGIC;
+signal enable 						: STD_LOGIC;
+
+signal RX_DATA  					: STD_LOGIC_VECTOR(7 downto 0);
+signal SUCCESS 					: STD_LOGIC := '1';
+signal RX_BUSY 					: STD_LOGIC;
+
+--signal TX_DATA  					: STD_LOGIC_VECTOR(7 downto 0);
+--signal TX_START 					: STD_LOGIC := '0';
+--signal TX_BUSY  					: STD_LOGIC;
+
+------------------------------------------------------------------
+--component TX is
+--	GENERIC(	sys_clk_freq	: INTEGER := 50_000_000;
+--				baudrate  		: INTEGER := 9600);	
+--	Port  (	CLK 				: in STD_LOGIC;
+--				DATA 				: in STD_LOGIC_VECTOR(7 downto 0);
+--				START 			: in STD_LOGIC;
+--				BUSY 				: out STD_LOGIC;
+--				TX_LINE 			: out STD_LOGIC);
+--end component TX;
+------------------------------------------------------------------
+component RX is
+GENERIC(	sys_clk_freq	: INTEGER := 50_000_000;
+			baudrate  		: INTEGER := 9600);	
+	Port(	CLK 				: in  STD_LOGIC;
+			RX_LINE 			: in  STD_LOGIC;
+			BUSY 				: out STD_LOGIC;
+			DATA 				: out STD_LOGIC_VECTOR(7 downto 0);
+			SUCCESS	 		: out STD_LOGIC);
+end component RX;
+------------------------------------------------------------------
+component pwmGenerator is
+	GENERIC(	bits_resolution 	: INTEGER 	:= 8;													--bits of resolution setting the duty cycle
+				sys_clk_freq 		: INTEGER 	:= 50_000_000;
+				pwm_freq     		: INTEGER 	:= 50;
+				min_period	 		: INTEGER 	:= 50_000;   										--in msec 0.563 ms
+				max_period	 		: INTEGER 	:= 100_000;											--in msec 0.563 ms
+				direction 			: STD_LOGIC := '0');   						
+	port   (	clk      			: in  STD_LOGIC;													--system clock
+				position 			: in  STD_LOGIC_VECTOR (bits_resolution-1 downto 0); 	--duty cycle
+				pwm_out  			: out STD_LOGIC);
+end component pwmGenerator;
+------------------------------------------------------------------
+component ms_counter is
+	GENERIC(	sys_clk_freq	: INTEGER := 50_000_000;
+				reach_to 		: INTEGER := 1000);													-- 1 sec
+	Port   ( clk				: in  STD_LOGIC;														--system clock
+				enable			: in  STD_LOGIC;	
+				count_flag		: out STD_LOGIC);
+end component ms_counter;
+------------------------------------------------------------------
+
+begin
+	--servo_x : pwmGenerator port map (sys_clk, position_x, pwm_x);
+	--C2 : TX port map (sys_clk, TX_START, TX_BUSY, TX_DATA, UART_TXD);
+	
+	servo_x : pwmGenerator generic map( bits_resolution 	=> pwm_resolution,
+													min_period	 		=> min_period,
+													max_period	 		=> max_period,
+													direction			=> '1')
+								  port map   ( clk 					=> sys_clk,
+												   position 			=> position_x,
+												   pwm_out 				=> pwm_x);
+	
+	servo_y : pwmGenerator generic map( bits_resolution 	=> pwm_resolution,
+													min_period	 		=> min_period,
+													max_period	 		=> max_period)
+								  port map   ( clk 					=> sys_clk,
+												   position 			=> position_y,
+												   pwm_out 				=> pwm_y);
+	
+	Receiver : RX generic map( baudrate 	=> baudrate)	
+					  port map 	 ( CLK 			=> sys_clk,
+										RX_LINE 		=> UART_RXD,
+										BUSY 			=> RX_BUSY,
+										DATA 			=> RX_DATA,
+										SUCCESS 		=> SUCCESS);
+	
+--	Transmitter : TX generic map( baudrate 	=> baudrate)
+--						  port map 	 ( CLK 		=> sys_clk,
+--											DATA 		=> TX_DATA,
+--											START 	=> TX_START,
+--											BUSY 		=> TX_BUSY,
+--											TX_LINE 	=> UART_TXD);
+	
+	count_150ms : ms_counter generic map ( reach_to 	=> 150)
+									 port map    ( clk 			=> sys_clk,
+													   enable 		=> enable,
+													   count_flag 	=> fire_confirmation);
+	
+--	process(sys_clk)
+--	begin
+--		if rising_edge(sys_clk) then
+--			if (TX_BUSY = '0') then
+--				TX_START <= '1';
+--			else
+--				TX_START <= '0';
+--			end if;
+--		end if;
+--	end process;
+	
+	process(RX_BUSY)
+		variable x_ok, y_ok : STD_LOGIC := '0';
+	begin
+		if falling_edge(RX_BUSY) then
+			if SUCCESS = '1' then
+				--TX_DATA <= x"F0";
+				
+				if RX_DATA(1 downto 0) = "11" then
+					x_ok := '1';
+					position_x <= RX_DATA(7 downto 2);
+				elsif RX_DATA(1 downto 0) = "10" then
+					y_ok := '1';
+					position_y <= RX_DATA(7 downto 2);
+				elsif RX_DATA(1 downto 0) = "01" then
+					y_ok := '0'; y_ok := '0';
+					position_X <= RX_DATA(7 downto 2);
+					position_y <= RX_DATA(7 downto 2);
+				else
+					x_ok := '0'; y_ok := '0';
+				end if;
+			else								-- not SUCCESSES
+				--TX_DATA <= x"FF";
+				x_ok := '0'; y_ok := '0';
+			end if;
+--			x_ok_led <= x_ok;
+--			y_ok_led <= y_ok;
+			enable <= x_ok and y_ok;
+		end if;
+	end process;
+	
+	laser 	<= '0' when fire_confirmation = '1' and confirmation_key = '1' else '1';
+	flicker 	<= '0' when fire_confirmation = '1' else '1';	
+	siren 	<= '0' when fire_confirmation = '1' else '1';
+	
+--	confirmation_key_led <= confirmation_key;
+	
+end Behavioral;

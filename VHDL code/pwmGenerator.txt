@@ -1,0 +1,46 @@
+
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+entity pwmGenerator is
+	GENERIC(	bits_resolution 	: INTEGER 	:= 8;													--bits of resolution setting the duty cycle
+				sys_clk_freq 		: INTEGER 	:= 50_000_000;
+				pwm_freq     		: INTEGER 	:= 50;
+				min_period	 		: INTEGER 	:= 50_000;   											--in msec 1 ms
+				max_period	 		: INTEGER 	:= 100_000;											--in msec 2 ms 
+				direction 			: STD_LOGIC := '0');   						
+	Port (  	clk      			: in STD_LOGIC;													--system clock
+				position 			: in STD_LOGIC_VECTOR (bits_resolution-1 downto 0); 	--duty cycle
+				pwm_out  			: out STD_LOGIC);													--pwm outputs
+end pwmGenerator;
+
+architecture logic of pwmGenerator is
+	constant period       		: INTEGER := sys_clk_freq/pwm_freq;         --number of clocks in one pwm period
+begin
+	process(clk)
+		variable count         	: INTEGER range 0 to period - 1 := 0;   	--array of period counters
+		variable num_of_period 	: INTEGER range 0 to max_period := 0;  		--number of clocks in 1/2 duty cycle
+	begin
+		if rising_edge(clk) then
+			if direction = '0' then
+				num_of_period := min_period + conv_integer(position)*(max_period-min_period)/(2**bits_resolution);    --determine clocks in 1/2 duty cycle
+			else
+				num_of_period := max_period - conv_integer(position)*(max_period-min_period)/(2**bits_resolution);
+			end if;
+			
+			if(count = period - 1) then                       				--end of period reached
+				count := 0;                                              --reset counter
+			else                                                        --end of period not reached
+				count := count + 1;                                  		--increment counter
+			end if;
+			
+			if(count <= num_of_period) then                            	--phase's falling edge reached
+				pwm_out <= '1';                                         	--deassert the pwm output
+			else 												              			--phase's rising edge reached
+				pwm_out <= '0';                                         	--assert the pwm output
+			end if;
+
+		end if;
+	end process;
+end logic;
